@@ -20,19 +20,32 @@ export default function VoiceAssistant() {
     error,
     init,
     start,
-    stop
+    stop,
+    release
   } = usePorcupine();
 
   // 在应用初始化时预加载模型
   useEffect(() => {
     // PorcupineWorkerFactory.preload(porcupineModel);
 
-    init(
-      accessKey,
-      porcupineWakeWord,
-      porcupineModel
-    )
-  }, [accessKey, init]);
+    const openVoiceListening = async () => {
+      await init(
+        accessKey,
+        porcupineWakeWord,
+        porcupineModel
+      )
+      await start()
+    }
+
+    openVoiceListening()
+
+    return () => {
+      if (isLoaded) {
+        stop()
+        release()
+      }
+    }
+  }, [accessKey, isLoaded, init, release, start, stop]);
 
 
   return (
