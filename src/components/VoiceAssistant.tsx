@@ -1,16 +1,18 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Input, Button, Typography, Alert, Card, Space, Badge, Descriptions, Flex } from 'antd';
 import { AudioOutlined, ApiOutlined, PoweroffOutlined } from '@ant-design/icons';
-import { usePorcupine } from "@picovoice/porcupine-react"; // 改用专用 Hook
+import { usePorcupine } from "@picovoice/porcupine-react";
 
 import picovoiceModels from "../lib/picovoiceModels";
 import porcupineWakeWord from "../lib/porcupineWakeWord";
+import VoiceRecorder from "./VoiceRecorder";
 
-const porcupineModel = picovoiceModels[0]; // 仅取第一个模型
+const porcupineModel = picovoiceModels[0];
 const { Title, Text } = Typography;
 
 export default function VoiceAssistant() {
   const [accessKey, setAccessKey] = useState(import.meta.env.VITE_ACCESS_KEY || '');
+  const [isRecorderActive, setIsRecorderActive] = useState(false);
 
   // 使用 Porcupine 专用 Hook
   const {
@@ -24,32 +26,43 @@ export default function VoiceAssistant() {
     release
   } = usePorcupine();
 
+  // 监听唤醒词检测
+  useEffect(() => {
+    if (keywordDetection) {
+      setIsRecorderActive(true);
+    }
+  }, [keywordDetection]);
+
   // 在应用初始化时预加载模型
   useEffect(() => {
-    // PorcupineWorkerFactory.preload(porcupineModel);
-
     const openVoiceListening = async () => {
       await init(
         accessKey,
         porcupineWakeWord,
         porcupineModel
-      )
-      await start()
-    }
+      );
+      await start();
+    };
 
-    openVoiceListening()
+    if (accessKey) {
+      openVoiceListening();
+    }
 
     return () => {
       if (isLoaded) {
-        stop()
-        release()
+        stop();
+        release();
       }
-    }
+    };
   }, [accessKey, isLoaded, init, release, start, stop]);
 
+  // 处理录音完成
+  const handleRecordingComplete = useCallback(() => {
+    setIsRecorderActive(false);
+  }, []);
 
   return (
-    <div className="flex flex-col gap-4 shadow-lg p-6">
+    <div className="flex flex-col gap-4 shadow-lg p-6 max-w-4xl m-auto">
       <Title level={2} className="mb-6 flex items-center">
         <AudioOutlined className="mr-2" />
         语音唤醒组件
@@ -69,20 +82,19 @@ export default function VoiceAssistant() {
             <Button
               type="primary"
               icon={<ApiOutlined />}
-              onClick={async () =>
-                await init(
-                  accessKey,
-                  porcupineWakeWord,
-                  porcupineModel
-                )
-              }
+              onClick={async () => {
+                await init(accessKey, porcupineWakeWord, porcupineModel);
+                await start();
+              }}
               className="w-1/4"
             >
               初始化
             </Button>
           </Flex>
           <Text type="secondary">
-            从 <a href="https://console.picovoice.ai/" target="_blank">Picovoice 控制台</a> 获取密钥
+            从 <a href="https://console.picovoice.ai/" target="_blank" rel="noopener noreferrer">
+              Picovoice 控制台
+            </a> 获取密钥
           </Text>
         </Space>
       </Card>
@@ -127,15 +139,21 @@ export default function VoiceAssistant() {
         </Button>
       </Space>
 
+      {/* 语音录制器 */}
+      {isRecorderActive && (
+        <VoiceRecorder
+          isActive={isRecorderActive}
+          onComplete={handleRecordingComplete}
+        />
+      )}
+
       {/* 唤醒状态反馈 */}
-      {isListening && (
-        <Card size="small">
-          {keywordDetection ? (
-            <Alert type="success" message={`检测到唤醒词 '${porcupineWakeWord.label}'`} showIcon />
-          ) : (
-            <Alert type="info" message="等待唤醒词中..." showIcon />
-          )}
-        </Card>
+      {isListening && !isRecorderActive && (
+        <Alert
+          type="info"
+          message={`等待唤醒词 “${porcupineWakeWord.label}” 中...`}
+          showIcon
+        />
       )}
     </div>
   );
