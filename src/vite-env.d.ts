@@ -3,6 +3,7 @@
 interface ImportMetaEnv {
   readonly VITE_ACCESS_KEY: string
   readonly VITE_API_ENDPOINT: string
+  readonly VITE_SOCKET_URL: string
 }
 
 interface ImportMeta {
