@@ -3,27 +3,27 @@ import { Alert, Progress } from 'antd';
 import AudioVisualizer from './AudioVisualizer';
 import ErrorDisplay from './ErrorDisplay';
 import { useErrorHandler } from '../hooks/error.hook';
+import { WebSocketServiceRef } from './WebSocketService';
 
 interface VoiceRecorderProps {
   isActive: boolean;
   onComplete: () => void;
+  wsRef: React.RefObject<WebSocketServiceRef>;
 }
 
 interface RecordingState {
   isRecording: boolean;
   isProcessing: boolean;
   isPlaying: boolean;
-  continuousMode: boolean;
   timeoutProgress: number;
 }
 
-export default function VoiceRecorder({ isActive, onComplete }: VoiceRecorderProps) {
+export default function VoiceRecorder({ isActive, onComplete, wsRef }: VoiceRecorderProps) {
   // 状态管理
   const [state, setState] = useState<RecordingState>({
     isRecording: false,
     isProcessing: false,
     isPlaying: false,
-    continuousMode: false,
     timeoutProgress: 0,
   });
 
@@ -40,10 +40,8 @@ export default function VoiceRecorder({ isActive, onComplete }: VoiceRecorderPro
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const audioStream = useRef<MediaStream | null>(null);
   const audioChunks = useRef<Blob[]>([]);
-  const audioPlayer = useRef<HTMLAudioElement>(new Audio());
-  const timeoutRef = useRef<number>(null);
-  const continuousModeTimeoutRef = useRef<number>(null);
-  const progressIntervalRef = useRef<number>(null);
+  const timeoutRef = useRef<number | null>(null);
+  const progressIntervalRef = useRef<number | null>(null);
 
   // 停止录音
   const stopRecording = useCallback(() => {
@@ -54,16 +52,6 @@ export default function VoiceRecorder({ isActive, onComplete }: VoiceRecorderPro
 
     setState(prev => ({ ...prev, isRecording: false }));
   }, []);
-
-  // 结束持续模式
-  const endContinuousMode = useCallback(() => {
-    setState(prev => ({
-      ...prev,
-      continuousMode: false,
-      timeoutProgress: 0
-    }));
-    onComplete();
-  }, [onComplete]);
 
   // 处理录音
   const processRecording = useCallback(async () => {
@@ -76,53 +64,26 @@ export default function VoiceRecorder({ isActive, onComplete }: VoiceRecorderPro
         throw new Error('没有检测到有效的音频数据');
       }
 
-      const formData = new FormData();
-      formData.append('audio', audioBlob);
-
-      const response = await fetch(import.meta.env.VITE_API_ENDPOINT, {
-        method: 'POST',
-        body: formData
-      });
-
-      if (!response.ok) {
-        throw new Error(`请求失败: ${response.statusText}`);
+      // 通过 WebSocket 发送音频数据
+      if (wsRef.current) {
+        wsRef.current.sendAudioStream(audioBlob);
+      } else {
+        throw new Error('WebSocket 服务未就绪');
       }
 
-      const responseBlob = await response.blob();
-      if (responseBlob.size === 0) {
-        throw new Error('服务器返回的音频数据无效');
-      }
-
-      const audioUrl = URL.createObjectURL(responseBlob);
-
-      // 播放响应
-      audioPlayer.current.src = audioUrl;
-      setState(prev => ({ ...prev, isProcessing: false, isPlaying: true }));
-
-      try {
-        await audioPlayer.current.play();
-      } catch (playError) {
-        handlePlaybackError(playError as Error);
-        return;
-      }
-
-      // 播放结束后进入持续模式
-      audioPlayer.current.onended = () => {
-        setState(prev => ({
-          ...prev,
-          isPlaying: false,
-          continuousMode: true,
-          timeoutProgress: 100
-        }));
-        startContinuousMode();
-      };
+      // 开始显示处理进度
+      let progress = 0;
+      progressIntervalRef.current = window.setInterval(() => {
+        progress = Math.min(progress + 1, 90);
+        setState(prev => ({ ...prev, timeoutProgress: progress }));
+      }, 100);
 
     } catch (error) {
       console.error('Processing error:', error);
       setState(prev => ({ ...prev, isProcessing: false }));
       handleProcessingError(error as Error);
     }
-  }, [clearError, handleProcessingError, handlePlaybackError]);
+  }, [clearError, handleProcessingError, wsRef]);
 
   // 开始录音
   const startRecording = useCallback(() => {
@@ -137,43 +98,14 @@ export default function VoiceRecorder({ isActive, onComplete }: VoiceRecorderPro
       setState(prev => ({ ...prev, isRecording: true }));
       clearError();
 
-      // 5秒后自动停止录音
+      // 30秒后自动停止录音
       timeoutRef.current = window.setTimeout(() => {
         stopRecording();
-      }, 5000);
+      }, 30000);
     } catch (error) {
       handleRecordingError(error as Error, '启动录音失败');
     }
   }, [stopRecording, clearError, handleRecordingError]);
-
-  // 持续模式处理
-  const startContinuousMode = useCallback(() => {
-    let progress = 100;
-    const interval = 150; // 15秒 = 100步
-
-    const updateProgress = () => {
-      progress -= 1;
-      setState(prev => ({ ...prev, timeoutProgress: progress }));
-
-      if (progress <= 0) {
-        if (progressIntervalRef.current) {
-          clearInterval(progressIntervalRef.current);
-        }
-        endContinuousMode();
-      }
-    };
-
-    // 每 150ms 更新一次进度
-    progressIntervalRef.current = window.setInterval(updateProgress, interval);
-
-    // 15 秒后结束持续模式
-    continuousModeTimeoutRef.current = window.setTimeout(() => {
-      if (progressIntervalRef.current) {
-        clearInterval(progressIntervalRef.current);
-      }
-      endContinuousMode();
-    }, 15000);
-  }, [endContinuousMode]);
 
   // 初始化录音
   const initializeRecording = useCallback(async () => {
@@ -220,9 +152,6 @@ export default function VoiceRecorder({ isActive, onComplete }: VoiceRecorderPro
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current);
     }
-    if (continuousModeTimeoutRef.current) {
-      clearTimeout(continuousModeTimeoutRef.current);
-    }
     if (progressIntervalRef.current) {
       clearInterval(progressIntervalRef.current);
     }
@@ -267,29 +196,10 @@ export default function VoiceRecorder({ isActive, onComplete }: VoiceRecorderPro
 
       {/* 处理状态显示 */}
       {state.isProcessing && (
-        <Alert
-          type="warning"
-          message="正在处理..."
-          showIcon
-        />
-      )}
-
-      {/* 播放状态显示 */}
-      {state.isPlaying && (
-        <Alert
-          type="success"
-          message="正在播放响应..."
-          showIcon
-        />
-      )}
-
-      {/* 持续模式显示 */}
-      {state.continuousMode && (
         <div className="mt-4">
           <Alert
-            type="info"
-            message="等待后续输入..."
-            description="15秒内可以继续说话"
+            type="warning"
+            message="正在处理..."
             showIcon
           />
           <Progress

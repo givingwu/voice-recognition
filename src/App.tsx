@@ -1,5 +1,5 @@
 import VoiceAssistant from './components/VoiceAssistant'
-import VoiceWidget from './components/VoiceWidget'
+// import VoiceWidget from './components/VoiceWidget'
 
 function App() {
   return (
