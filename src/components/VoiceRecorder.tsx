@@ -6,9 +6,9 @@ import { useErrorHandler } from '../hooks/error.hook';
 import { WebSocketServiceRef } from './WebSocketService';
 
 interface VoiceRecorderProps {
+  websocketService: WebSocketServiceRef | null;
   isActive: boolean;
   onComplete: () => void;
-  wsRef: React.RefObject<WebSocketServiceRef>;
 }
 
 interface RecordingState {
@@ -18,7 +18,7 @@ interface RecordingState {
   timeoutProgress: number;
 }
 
-export default function VoiceRecorder({ isActive, onComplete, wsRef }: VoiceRecorderProps) {
+export default function VoiceRecorder({ isActive, onComplete, websocketService }: VoiceRecorderProps) {
   // 状态管理
   const [state, setState] = useState<RecordingState>({
     isRecording: false,
@@ -60,13 +60,14 @@ export default function VoiceRecorder({ isActive, onComplete, wsRef }: VoiceReco
 
     try {
       const audioBlob = new Blob(audioChunks.current, { type: 'audio/wav' });
+
       if (audioBlob.size === 0) {
         throw new Error('没有检测到有效的音频数据');
       }
 
       // 通过 WebSocket 发送音频数据
-      if (wsRef.current) {
-        wsRef.current.sendAudioStream(audioBlob);
+      if (websocketService) {
+        websocketService.sendAudioStream(audioBlob);
       } else {
         throw new Error('WebSocket 服务未就绪');
       }
@@ -83,7 +84,7 @@ export default function VoiceRecorder({ isActive, onComplete, wsRef }: VoiceReco
       setState(prev => ({ ...prev, isProcessing: false }));
       handleProcessingError(error as Error);
     }
-  }, [clearError, handleProcessingError, wsRef]);
+  }, [clearError, handleProcessingError, websocketService]);
 
   // 开始录音
   const startRecording = useCallback(() => {
@@ -98,14 +99,15 @@ export default function VoiceRecorder({ isActive, onComplete, wsRef }: VoiceReco
       setState(prev => ({ ...prev, isRecording: true }));
       clearError();
 
-      // 30秒后自动停止录音
+      // 5 秒后自动停止录音
       timeoutRef.current = window.setTimeout(() => {
         stopRecording();
-      }, 30000);
+        onComplete()
+      }, 5e3);
     } catch (error) {
       handleRecordingError(error as Error, '启动录音失败');
     }
-  }, [stopRecording, clearError, handleRecordingError]);
+  }, [handleRecordingError, clearError, stopRecording, onComplete]);
 
   // 初始化录音
   const initializeRecording = useCallback(async () => {
@@ -127,11 +129,9 @@ export default function VoiceRecorder({ isActive, onComplete, wsRef }: VoiceReco
           audioChunks.current.push(event.data);
         }
       };
-
       mediaRecorder.current.onerror = (event) => {
         handleRecordingError(event.error, '录音设备错误');
       };
-
       mediaRecorder.current.onstop = async () => {
         await processRecording();
       };

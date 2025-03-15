@@ -222,7 +222,7 @@ export default function VoiceAssistant() {
           <VoiceRecorder
             isActive={isRecorderActive}
             onComplete={handleRecordingComplete}
-            wsRef={wsRef}
+            websocketService={wsRef.current}
           />
         </Card>
       )}
